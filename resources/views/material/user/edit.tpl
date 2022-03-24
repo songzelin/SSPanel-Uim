@@ -3,7 +3,7 @@
 <main class="content">
     <div class="content-header ui-content-header">
         <div class="container">
-            <h1 class="content-heading">修改资料</h1>
+            <h1 class="content-heading">资料编辑</h1>
         </div>
     </div>
     <div class="container">
@@ -267,7 +267,6 @@
                                     <code id="ajax-im" data-default="imtype">
                                         {if $user->im_type==1}微信{/if}
                                         {if $user->im_type==2}QQ{/if}
-                                        {if $user->im_type==3}Google+{/if}
                                         {if $user->im_type==4}Telegram{/if}
                                         {if $user->im_type==5}Discord{/if}
                                     </code>

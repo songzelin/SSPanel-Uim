@@ -18,14 +18,18 @@ use App\Models\{
     Token,
     Bought,
     Coupon,
+    Product,
     Payback,
     BlockIp,
     LoginIp,
+    Setting,
     UnblockIp,
     DetectLog,
     DetectRule,
     InviteCode,
+    StreamMedia,
     EmailVerify,
+    ProductOrder,
     UserSubscribeLog
 };
 use App\Utils\{
@@ -38,6 +42,7 @@ use App\Utils\{
     Cookie,
     Telegram,
     ClientProfiles,
+    DatatablesHelper,
     TelegramSessionManager
 };
 use voku\helper\AntiXSS;
@@ -52,6 +57,33 @@ use Slim\Http\{
  */
 class UserController extends BaseController
 {
+    public function user_order($request, $response, $args)
+    {
+        $user = $this->user;
+        $pageNum = $request->getQueryParams()['page'] ?? 1;
+        $orders = ProductOrder::where('user_id', $user->id)->orderBy('id', 'desc')->paginate(15, ['*'], 'page', $pageNum);
+        $orders->setPath('/user/order');
+        $render = Tools::paginate_render($orders);
+
+        return $response->write(
+            $this->view()
+                ->assign('orders', $orders)
+                ->assign('render', $render)
+                ->display('user/order.tpl')
+        );
+    }
+
+    public function product_index($request, $response, $args)
+    {
+        $products = Product::all();
+
+        return $response->write(
+            $this->view()
+                ->assign('products', $products)
+                ->display('user/product.tpl')
+        );
+    }
+
     /**
      * @param Request   $request
      * @param Response  $response
@@ -79,6 +111,18 @@ class UserController extends BaseController
             $token = '';
         }
 
+        if (Setting::obtain('enable_checkin_captcha') == true) {
+            $geetest_html = $captcha['geetest'];
+        } else {
+            $geetest_html = null;
+        }
+
+        $data = [
+            'today_traffic_usage' => ($this->user->transfer_enable == 0) ? 0 : ($this->user->u + $this->user->d - $this->user->last_day_t) / $this->user->transfer_enable * 100,
+            'past_traffic_usage' => ($this->user->transfer_enable == 0) ? 0 : $this->user->last_day_t / $this->user->transfer_enable * 100,
+            'residual_flow' => ($this->user->transfer_enable==0) ? 0 : ($this->user->transfer_enable - ($this->user->u + $this->user->d)) / $this->user->transfer_enable * 100,
+        ];
+
         return $response->write(
             $this->view()
                 ->assign('ssr_sub_token', $this->user->getSublink())
@@ -87,13 +131,15 @@ class UserController extends BaseController
                 ->assign('ios_account', $_ENV['ios_account'])
                 ->assign('ios_password', $_ENV['ios_password'])
                 ->assign('ann', Ann::orderBy('date', 'desc')->first())
-                ->assign('geetest_html', $captcha['geetest'])
+                ->assign('geetest_html', $geetest_html)
                 ->assign('mergeSub', $_ENV['mergeSub'])
                 ->assign('subUrl', $_ENV['subUrl'])
                 ->registerClass('URL', URL::class)
                 ->assign('recaptcha_sitekey', $captcha['recaptcha'])
                 ->assign('subInfo', LinkController::getSubinfo($this->user, 0))
+                ->assign('getUniversalSub', SubController::getUniversalSub($this->user))
                 ->assign('getClient', $token)
+                ->assign('data', $data)
                 ->display('user/index.tpl')
         );
     }
@@ -117,7 +163,8 @@ class UserController extends BaseController
         return $response->write(
             $this->view()
                 ->assign('codes', $codes)
-                ->assign('pmw', Payment::purchaseHTML())
+                ->assign('payments', Payment::getPaymentsEnabled())
+                // ->assign('pmw', Payment::purchaseHTML())
                 ->assign('render', $render)
                 ->display('user/code.tpl')
         );
@@ -212,14 +259,15 @@ class UserController extends BaseController
         if ($code == '') {
             return $response->withJson([
                 'ret' => 0,
-                'msg' => '非法输入'
+                'msg' => '请填写充值码'
             ]);
         }
+
         $codeq = Code::where('code', $code)->where('isused', 0)->first();
         if ($codeq == null) {
             return $response->withJson([
                 'ret' => 0,
-                'msg' => '此充值码错误'
+                'msg' => '没有这个充值码'
             ]);
         }
 
@@ -232,20 +280,10 @@ class UserController extends BaseController
         if ($codeq->type == -1) {
             $user->money += $codeq->number;
             $user->save();
-            if ($user->ref_by != 0) {
-                $gift_user = $user->ref_by_user();
-                if ($gift_user != null) {
-                    $ref_get            = $codeq->number * ($_ENV['code_payback'] / 100);
-                    $gift_user->money  += $ref_get;
-                    $gift_user->save();
-                    $Payback            = new Payback();
-                    $Payback->total     = $codeq->number;
-                    $Payback->userid    = $this->user->id;
-                    $Payback->ref_by    = $this->user->ref_by;
-                    $Payback->ref_get   = $ref_get;
-                    $Payback->datetime  = time();
-                    $Payback->save();
-                }
+
+            // 返利
+            if ($user->ref_by > 0 && Setting::obtain('invitation_mode') == 'after_recharge') {
+                Payback::rebate($user->id, $codeq->number);
             }
 
             if ($_ENV['enable_donate']) {
@@ -258,7 +296,7 @@ class UserController extends BaseController
 
             return $response->withJson([
                 'ret' => 1,
-                'msg' => '充值成功，充值的金额为' . $codeq->number . '元。'
+                'msg' => '兑换成功，金额为 ' . $codeq->number . ' 元'
             ]);
         }
 
@@ -401,18 +439,12 @@ class UserController extends BaseController
 
         $paybacks->setPath('/user/profile');
 
-        $iplocation  = new QQWry();
-
-        $userloginip = [];
+        // 登录IP
         $totallogin  = LoginIp::where('userid', '=', $this->user->id)->where('type', '=', 0)->orderBy('datetime', 'desc')->take(10)->get();
-        foreach ($totallogin as $single) {
-            if (!isset($userloginip[$single->ip])) {
-                $location                 = $iplocation->getlocation($single->ip);
-                $userloginip[$single->ip] = iconv('gbk', 'utf-8//IGNORE', $location['country'] . $location['area']);
-            }
-        }
 
+        // 使用IP
         $userip = [];
+        $iplocation  = new QQWry();
         $total  = Ip::where('datetime', '>=', time() - 300)->where('userid', '=', $this->user->id)->get();
         foreach ($total as $single) {
             $single->ip = Tools::getRealIp($single->ip);
@@ -428,7 +460,7 @@ class UserController extends BaseController
 
         if ($request->getParam('json') == 1) {
             $res['userip']      = $userip;
-            $res['userloginip'] = $userloginip;
+            $res['userloginip'] = $totallogin;
             $res['paybacks']    = $paybacks;
             $res['ret']         = 1;
             return $response->withJson($res);
@@ -440,8 +472,9 @@ class UserController extends BaseController
             $this->view()
                 ->assign('boughts'    , $boughts)
                 ->assign('userip'     , $userip)
-                ->assign('userloginip', $userloginip)
+                ->assign('userloginip', $totallogin)
                 ->assign('paybacks'   , $paybacks)
+                ->registerClass('Tools', Tools::class)
                 ->display('user/profile.tpl')
         );
     }
@@ -474,11 +507,69 @@ class UserController extends BaseController
      * @param Response  $response
      * @param array     $args
      */
-    public function tutorial($request, $response, $args)
+    public function media($request, $response, $args)
     {
-        return $response->write(
-            $this->view()->display('user/tutorial.tpl')
-        );
+        $results = [];
+        $db = new DatatablesHelper;
+        $nodes = $db->query('SELECT DISTINCT node_id FROM stream_media');
+        
+        foreach ($nodes as $node_id)
+        {
+            $node = Node::where('id', $node_id)->first();
+            
+            $unlock = StreamMedia::where('node_id', $node_id)
+            ->orderBy('id', 'desc')
+            ->where('created_at', '>', time() - 86460) // 只获取最近一天零一分钟内上报的数据
+            ->first();
+            
+            if ($unlock != null && $node != null) {
+                $details = json_decode($unlock->result, true);
+                $details = str_replace('Originals Only', '仅限自制', $details);
+                $details = str_replace('Oversea Only', '仅限海外', $details);
+
+                foreach ($details as $key => $value)
+                {
+                    $info = [
+                        'node_name' => $node->name,
+                        'created_at' => $unlock->created_at,
+                        'unlock_item' => $details
+                    ];
+                }
+                
+                array_push($results, $info);
+            }
+        }
+
+        if ($_ENV['streaming_media_unlock_multiplexing'] != null ) {
+            foreach ($_ENV['streaming_media_unlock_multiplexing'] as $key => $value)
+            {
+                $key_node = Node::where('id', $key)->first();
+                $value_node = StreamMedia::where('node_id', $value)
+                ->orderBy('id', 'desc')
+                ->where('created_at', '>', time() - 86460) // 只获取最近一天零一分钟内上报的数据
+                ->first();
+
+                if ($value_node != null) {
+                    $details = json_decode($value_node->result, true);
+                    $details = str_replace('Originals Only', '仅限自制', $details);
+                    $details = str_replace('Oversea Only', '仅限海外', $details);
+                    
+                    $info = [
+                        'node_name' => $key_node->name,
+                        'created_at' => $value_node->created_at,
+                        'unlock_item' => $details
+                    ];
+                    
+                    array_push($results, $info);
+                }
+           }
+        }
+
+        array_multisort(array_column($results, 'node_name'), SORT_ASC, $results);
+        
+        return $this->view()
+            ->assign('results', $results)
+            ->display('user/media.tpl');
     }
 
     /**
@@ -529,17 +620,26 @@ class UserController extends BaseController
         }
 
         $pageNum = $request->getQueryParams()['page'] ?? 1;
-        $paybacks = Payback::where('ref_by', $this->user->id)->orderBy('id', 'desc')->paginate(15, ['*'], 'page', $pageNum);
+
+        $paybacks = Payback::where('ref_by', $this->user->id)
+        ->orderBy('id', 'desc')
+        ->paginate(15, ['*'], 'page', $pageNum);
+
         if (!$paybacks_sum = Payback::where('ref_by', $this->user->id)->sum('ref_get')) {
             $paybacks_sum = 0;
         }
+
         $paybacks->setPath('/user/invite');
         $render = Tools::paginate_render($paybacks);
+
+        $invite_url = $_ENV['baseUrl'] . '/auth/register?code=' . $code->code;
+
         return $this->view()
             ->assign('code', $code)
-            ->assign('paybacks', $paybacks)
-            ->assign('paybacks_sum', $paybacks_sum)
             ->assign('render', $render)
+            ->assign('paybacks', $paybacks)
+            ->assign('invite_url', $invite_url)
+            ->assign('paybacks_sum', $paybacks_sum)
             ->display('user/invite.tpl');
     }
 
@@ -672,7 +772,7 @@ class UserController extends BaseController
         if ($_ENV['enable_forced_replacement'] == true) {
             $user->clean_link();
         }
-        
+
         $res['ret'] = 1;
         $res['msg'] = '修改成功';
         return $response->withJson($res);
@@ -689,14 +789,14 @@ class UserController extends BaseController
         $newemail = $request->getParam('newemail');
         $oldemail = $user->email;
         $otheruser = User::where('email', $newemail)->first();
-        
+
         if ($_ENV['enable_change_email'] != true) {
             $res['ret'] = 0;
             $res['msg'] = '此项不允许自行修改，请联系管理员操作';
             return $response->withJson($res);
         }
-        
-        if (Config::getconfig('Register.bool.Enable_email_verify')) {
+
+        if (Setting::obtain('reg_email_verify')) {
             $emailcode = $request->getParam('emailcode');
             $mailcount = EmailVerify::where('email', '=', $newemail)->where('code', '=', $emailcode)->where('expire_in', '>', time())->first();
             if ($mailcount == null) {
@@ -705,30 +805,30 @@ class UserController extends BaseController
                 return $response->withJson($res);
             }
         }
-        
+
         if ($newemail == '') {
             $res['ret'] = 0;
             $res['msg'] = '未填写邮箱';
             return $response->withJson($res);
         }
-        
+
         $check_res = Check::isEmailLegal($newemail);
         if ($check_res['ret'] == 0) {
             return $response->withJson($check_res);
         }
-        
+
         if ($otheruser != null) {
             $res['ret'] = 0;
             $res['msg'] = '邮箱已经被使用了';
             return $response->withJson($res);
         }
-        
+
         if ($newemail == $oldemail) {
             $res['ret'] = 0;
             $res['msg'] = '新邮箱不能和旧邮箱一样';
             return $response->withJson($res);
         }
-        
+
         $antiXss = new AntiXSS();
         $user->email = $antiXss->xss_clean($newemail);
         $user->save();
@@ -923,6 +1023,11 @@ class UserController extends BaseController
         $bought->save();
 
         $shop->buy($user);
+
+        // 返利
+        if ($user->ref_by > 0 && Setting::obtain('invitation_mode') == 'after_purchase') {
+            Payback::rebate($user->id, $price);
+        }
 
         $res['ret'] = 1;
         $res['msg'] = '购买成功';
@@ -1343,23 +1448,23 @@ class UserController extends BaseController
     {
         if ($_ENV['enable_checkin'] === false) {
             $res['ret'] = 0;
-            $res['msg'] = '目前站点没有启用签到功能。';
+            $res['msg'] = '暂时还不能签到';
             return $response->withJson($res);
         }
 
-        if ($_ENV['enable_checkin_captcha'] == true) {
+        if (Setting::obtain('enable_checkin_captcha') == true) {
             $ret = Captcha::verify($request->getParams());
             if (!$ret) {
                 return $response->withJson([
                     'ret' => 0,
-                    'msg' => '系统无法接受您的验证结果，请刷新页面后重试。'
+                    'msg' => '系统无法接受您的验证结果，请刷新页面后重试'
                 ]);
             }
         }
 
         if (strtotime($this->user->expire_in) < time()) {
             $res['ret'] = 0;
-            $res['msg'] = '您的账户已过期，无法签到。';
+            $res['msg'] = '没有过期的账户才可以签到';
             return $response->withJson($res);
         }
 
@@ -1532,7 +1637,10 @@ class UserController extends BaseController
     {
         $user = $this->user;
         $user->clear_inviteCodes();
-        return $response->withStatus(302)->withHeader('Location', '/user/invite');
+
+        $res['ret'] = 1;
+        $res['msg'] = '重置成功';
+        return $response->withJson($res);
     }
 
     /**
@@ -1623,27 +1731,16 @@ class UserController extends BaseController
         if ($_ENV['subscribeLog_show'] === false) {
             return $response->withStatus(302)->withHeader('Location', '/user');
         }
+
         $pageNum = $request->getQueryParams()['page'] ?? 1;
         $logs = UserSubscribeLog::orderBy('id', 'desc')->where('user_id', $this->user->id)->paginate(15, ['*'], 'page', $pageNum);
-        $iplocation = new QQWry();
         $logs->setPath('/user/subscribe_log');
 
-        if (($request->getParam('json') == 1)) {
-            $res['ret'] = 1;
-            $res['logs'] = $logs;
-            foreach ($logs as $log) {
-                $location = $iplocation->getlocation($log->request_ip);
-                $log->country = iconv("gbk", "utf-8//IGNORE", $location['country']);
-                $log->area = iconv("gbk", "utf-8//IGNORE", $location['area']);
-            }
-            $res['subscribeLog_keep_days'] = $_ENV['subscribeLog_keep_days'];
-            return $response->withJson($res);
-        }
         $render = Tools::paginate_render($logs);
         return $this->view()
             ->assign('logs', $logs)
-            ->assign('iplocation', $iplocation)
             ->assign('render', $render)
+            ->registerClass('Tools', Tools::class)
             ->fetch('user/subscribe_log.tpl');
     }
 

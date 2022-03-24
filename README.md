@@ -37,15 +37,15 @@ SSPanel UIM 的需要以下程序才能正常的安装和运行：
 - PHP 7.2+
 - Composer
 
-SSPanel UIM 支持安装在 LNMP、宝塔面板、Plesk、Oneinstack 等集成环境中。安装教程请参阅 [文档](https://wiki.sspanel.host)。
+SSPanel UIM 支持安装在 LNMP、宝塔面板、Plesk、Oneinstack 等集成环境中。安装教程请参阅 [文档](https://wiki.sspanel.org)。
 
 ## 演示
 
 [演示站](https://demo.sspanel.org/) 每天更新 `dev` 分支最新源码。
 
 ```
-账号：admin
-密码：admin
+账号：admin@sspanel.org
+密码：password
 mukey ShirakamiFubuki
 ```
 
@@ -53,7 +53,7 @@ mukey ShirakamiFubuki
 
 > 我们安装，我们更新，我们开发
 
-[SSPanel UIM 的文档](https://wiki.sspanel.host)，在这里你可以找到大部分问题的解答。
+[SSPanel UIM 的文档](https://wiki.sspanel.org)，在这里你可以找到大部分问题的解答。
 
 ## 贡献
 
@@ -152,10 +152,6 @@ SSPanel UIM 离不开所有 [贡献代码](https://github.com/Anankke/SSPanel-Ui
 
 - [Anankke 很可爱请给 Anankke 钱](https://t.me/anankke/7)
 
-#### dumplin
-
-- [码支付-微信收款功能开通](https://codepay.fateqq.com/i/39756)
-
 #### galaxychuck
 
 - [Moecloud-美國VPS](https://lite.moe/aff.php?aff=56)
@@ -166,5 +162,5 @@ SSPanel UIM 离不开所有 [贡献代码](https://github.com/Anankke/SSPanel-Ui
 
 #### M1Screw
 
-- [Vultr-不用我多解釋了吧](https://www.vultr.com/?ref=8403120-6G)
+- [Vultr-不用我多解釋了吧](https://www.vultr.com/?ref=8941355-8H)
 

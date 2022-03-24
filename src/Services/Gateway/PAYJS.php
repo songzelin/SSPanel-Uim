@@ -5,18 +5,29 @@ namespace App\Services\Gateway;
 use App\Services\View;
 use App\Services\Auth;
 use App\Models\Paylist;
+use App\Models\Setting;
 
 class PAYJS extends AbstractPayment
 {
+    public static function _name() 
+    {
+        return 'payjs';
+    }
+
+    public static function _enable() 
+    {
+        return self::getActiveGateway('payjs');
+    }
+
     private $appSecret;
     private $gatewayUri;
     /**
      * 签名初始化
      * @param merKey    签名密钥
      */
-    public function __construct($appSecret)
+    public function __construct()
     {
-        $this->appSecret = $appSecret;
+        $this->appSecret = Setting::obtain('payjs_key');
         $this->gatewayUri = 'https://payjs.cn/api/';
     }
     /**
@@ -24,7 +35,7 @@ class PAYJS extends AbstractPayment
      */
     public function prepareSign($data)
     {
-        $data['mchid'] = $_ENV['payjs_mchid'];
+        $data['mchid'] = Setting::obtain('payjs_mchid');
         $data = array_filter($data);
         ksort($data);
         return http_build_query($data);
@@ -86,11 +97,11 @@ class PAYJS extends AbstractPayment
         //if ($type != 'alipay') {
         //$type = '';
         //}
-        $data['mchid'] = $_ENV['payjs_mchid'];
+        $data['mchid'] = Setting::obtain('payjs_mchid');
         //$data['type'] = $type;
         $data['out_trade_no'] = $pl->tradeno;
         $data['total_fee'] = (float) $price * 100;
-        $data['notify_url'] = $_ENV['baseUrl'] . '/payment/notify?way=payjs';
+        $data['notify_url'] = self::getCallbackUrl();
         //$data['callback_url'] = $_ENV['baseUrl'] . '/user/code';
         $params = $this->prepareSign($data);
         $data['sign'] = $this->sign($params);
@@ -147,7 +158,7 @@ class PAYJS extends AbstractPayment
         $data['sign'] = $this->sign($params);
         return $this->post($data, 'refund');
     }
-    public function getPurchaseHTML()
+    public static function getPurchaseHTML()
     {
         return View::getSmarty()->fetch('user/payjs.tpl');
     }

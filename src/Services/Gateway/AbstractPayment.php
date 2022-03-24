@@ -8,10 +8,11 @@
 
 namespace App\Services\Gateway;
 
-use App\Models\Paylist;
-use App\Models\Payback;
 use App\Models\User;
 use App\Models\Code;
+use App\Models\Paylist;
+use App\Models\Payback;
+use App\Models\Setting;
 use App\Utils\Telegram;
 use Slim\Http\{Request, Response};
 
@@ -32,6 +33,25 @@ abstract class AbstractPayment
     abstract public function notify($request, $response, $args);
 
     /**
+     * 支付网关的 codeName, 规则为 [0-9a-zA-Z_]*
+     */
+    abstract public static function _name();
+
+    /**
+     * 是否启用支付网关
+     * 
+     * TODO: 传入目前用户信, etc..
+     */
+    abstract public static function _enable();
+
+    /**
+     * 显示给用户的名称
+     */
+    public static function _readableName() {
+        return (get_called_class())::_name() . ' 充值';
+    }
+    
+    /**
      * @param Request   $request
      * @param Response  $response
      * @param array     $args
@@ -45,7 +65,24 @@ abstract class AbstractPayment
      */
     abstract public function getStatus($request, $response, $args);
 
-    abstract public function getPurchaseHTML();
+    abstract public static function getPurchaseHTML();
+
+    protected static function getCallbackUrl() {
+        return $_ENV['baseUrl'] . '/payment/notify/' . (get_called_class())::_name();
+    }
+
+    protected static function getUserReturnUrl() {
+        return $_ENV['baseUrl'] . '/user/payment/return/' . (get_called_class())::_name();
+    }
+
+    protected static function getActiveGateway($key) {
+        $payment_gateways = Setting::where('item', '=', 'payment_gateway')->first();
+        $active_gateways = json_decode($payment_gateways->value);
+        if (in_array($key, $active_gateways)) {
+            return true;
+        }
+        return false;
+    }
 
     public function postPayment($pid, $method)
     {
@@ -69,17 +106,9 @@ abstract class AbstractPayment
         $codeq->userid = $user->id;
         $codeq->save();
 
-        if ($user->ref_by >= 1) {
-            $gift_user = User::where('id', '=', $user->ref_by)->first();
-            $gift_user->money += ($codeq->number * ($_ENV['code_payback'] / 100));
-            $gift_user->save();
-            $Payback = new Payback();
-            $Payback->total = $codeq->number;
-            $Payback->userid = $user->id;
-            $Payback->ref_by = $user->ref_by;
-            $Payback->ref_get = $codeq->number * ($_ENV['code_payback'] / 100);
-            $Payback->datetime = time();
-            $Payback->save();
+        // 返利
+        if ($user->ref_by > 0 && Setting::obtain('invitation_mode') == 'after_recharge') {
+            Payback::rebate($user->id, $p->total);
         }
 
         if ($_ENV['enable_donate'] == true) {

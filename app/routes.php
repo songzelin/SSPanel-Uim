@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use Slim\App as SlimApp;
-use App\Middleware\{Auth, Guest, Admin, Mod_Mu};
+use App\Middleware\{Auth, Guest, Admin, Mod_Mu, AuthorizationBearer};
 
 return function (SlimApp $app) {
     // Home
@@ -27,8 +27,8 @@ return function (SlimApp $app) {
 
         $this->post('/checkin',                 App\Controllers\UserController::class . ':doCheckin');
 
-        $this->get('/tutorial',                 App\Controllers\UserController::class . ':tutorial');
         $this->get('/announcement',             App\Controllers\UserController::class . ':announcement');
+        $this->get('/media',                    App\Controllers\UserController::class . ':media');
 
         $this->get('/donate',                   App\Controllers\UserController::class . ':donate');
         $this->get('/profile',                  App\Controllers\UserController::class . ':profile');
@@ -87,7 +87,10 @@ return function (SlimApp $app) {
         $this->get('/bought',                   App\Controllers\UserController::class . ':bought');
         $this->delete('/bought',                App\Controllers\UserController::class . ':deleteBoughtGet');
         $this->get('/url_reset',                App\Controllers\UserController::class . ':resetURL');
-        $this->get('/inviteurl_reset',          App\Controllers\UserController::class . ':resetInviteURL');
+        $this->put('/invite',                   App\Controllers\UserController::class . ':resetInviteURL');
+
+        $this->get('/order',                    App\Controllers\UserController::class . ':user_order');
+        $this->get('/product',                  App\Controllers\UserController::class . ':product_index');
 
         // 订阅记录
         $this->get('/subscribe_log',            App\Controllers\UserController::class . ':subscribe_log');
@@ -98,24 +101,18 @@ return function (SlimApp $app) {
         // getPcClient
         $this->get('/getPcClient',              App\Controllers\UserController::class . ':getPcClient');
 
-        $this->post('/code/f2fpay',             App\Services\Payment::class . ':purchase');
-        $this->get('/code/codepay',             App\Services\Payment::class . ':purchase');
-        $this->get('/code/vmqpay',             App\Services\Payment::class . ':purchase');
-
         //Reconstructed Payment System
-        $this->post('/payment/purchase',        App\Services\Payment::class . ':purchase');
-        $this->get('/payment/return',           App\Services\Payment::class . ':returnHTML');
-
-        $this->post('/doiam',                   App\Services\Payment::class . ':purchase');
+        $this->post('/payment/purchase/{type}',        App\Services\Payment::class . ':purchase');
+        $this->get('/payment/purchase/{type}',         App\Services\Payment::class . ':purchase');
+        $this->get('/payment/return/{type}',           App\Services\Payment::class . ':returnHTML');
 
     })->add(new Auth());
 
     $app->group('/payment', function () {
-        $this->get('/notify',           App\Services\Payment::class . ':notify');
-        $this->post('/notify',          App\Services\Payment::class . ':notify');
+        $this->get('/notify/{type}',           App\Services\Payment::class . ':notify');
         $this->post('/notify/{type}',   App\Services\Payment::class . ':notify');
-        $this->post('/status',          App\Services\Payment::class . ':getStatus');
-        $this->post('/coinpay/notify',  App\Services\CoinPayment::class. ':notify');
+        $this->post('/status/{type}',          App\Services\Payment::class . ':getStatus');
+        // $this->post('/coinpay/notify',  App\Services\CoinPayment::class. ':notify');
     });
 
     // Auth
@@ -180,6 +177,14 @@ return function (SlimApp $app) {
         $this->get('/bought',                   App\Controllers\Admin\ShopController::class . ':bought');
         $this->delete('/bought',                App\Controllers\Admin\ShopController::class . ':deleteBoughtGet');
         $this->post('/bought/ajax',             App\Controllers\Admin\ShopController::class . ':ajax_bought');
+
+        // Product
+        $this->get('/product',                  App\Controllers\Admin\ProductController::class . ':index');
+        $this->get('/product/create',           App\Controllers\Admin\ProductController::class . ':create');
+        $this->post('/product',                 App\Controllers\Admin\ProductController::class . ':save');
+        $this->get('/product/{id}/edit',        App\Controllers\Admin\ProductController::class . ':edit');
+        $this->put('/product/{id}',             App\Controllers\Admin\ProductController::class . ':update');
+        $this->delete('/product/{id}',          App\Controllers\Admin\ProductController::class . ':delete');
 
         // Ann Mange
         $this->get('/announcement',             App\Controllers\Admin\AnnController::class . ':index');
@@ -264,6 +269,12 @@ return function (SlimApp $app) {
         $this->get('/user/{id}/login',          App\Controllers\Admin\UserLog\LoginLogController::class . ':index');
         $this->post('/user/{id}/login/ajax',    App\Controllers\Admin\UserLog\LoginLogController::class . ':ajax');
 
+        // 设置中心
+        $this->get('/setting',                  App\Controllers\Admin\SettingController::class . ':index');
+        $this->post('/setting',                 App\Controllers\Admin\SettingController::class . ':save');
+        $this->post('/setting/email',           App\Controllers\Admin\SettingController::class . ':test');
+        $this->post('/setting/payment',         App\Controllers\Admin\SettingController::class . ':payment');
+
         // Config Mange
         $this->group('/config', function () {
             $this->put('/update/{key}',         App\Controllers\Admin\GConfigController::class . ':update');
@@ -271,14 +282,27 @@ return function (SlimApp $app) {
 
             $this->get('/telegram',             App\Controllers\Admin\GConfigController::class . ':telegram');
             $this->post('/telegram/ajax',       App\Controllers\Admin\GConfigController::class . ':telegram_ajax');
-
-            $this->get('/register',             App\Controllers\Admin\GConfigController::class . ':register');
-            $this->post('/register/ajax',       App\Controllers\Admin\GConfigController::class . ':register_ajax');
         });
     })->add(new Admin());
 
+    if ($_ENV['enableAdminApi']){
+        $app->group('/admin/api', function () {
+            $this->get('/nodes',     App\Controllers\Admin\ApiController::class . ':getNodeList');
+            $this->get('/node/{id}', App\Controllers\Admin\ApiController::class . ':getNodeInfo');
+            $this->get('/ping',      App\Controllers\Admin\ApiController::class . ':ping');
+
+            // Re-bind controller, bypass admin token require
+            $this->post('/node',       App\Controllers\Admin\NodeController::class . ':add');
+            $this->put('/node/{id}',   App\Controllers\Admin\NodeController::class . ':update');
+            $this->delete('/node',     App\Controllers\Admin\NodeController::class . ':delete');
+        })->add(new AuthorizationBearer($_ENV['adminApiToken']));
+    }
+
     // mu
     $app->group('/mod_mu', function () {
+        // 流媒体检测
+        $this->post('/media/saveReport',    App\Controllers\Mod_Mu\NodeController::class . ':saveReport');
+        // 其他
         $this->get('/nodes/{id}/info',      App\Controllers\Mod_Mu\NodeController::class . ':get_info');
         $this->post('/nodes/{id}/info',     App\Controllers\Mod_Mu\NodeController::class . ':info');
         $this->get('/nodes',                App\Controllers\Mod_Mu\NodeController::class . ':get_all_info');
@@ -297,16 +321,16 @@ return function (SlimApp $app) {
         //============================================
     })->add(new Mod_Mu());
 
-    // res
-    $app->group('/res', function () {
-        $this->get('/captcha/{id}',     App\Controllers\ResController::class . ':captcha');
+    $app->group('/link', function () {
+        $this->get('/{token}',              App\Controllers\LinkController::class . ':GetContent');
     });
 
-    $app->group('/link', function () {
-        $this->get('/{token}',          App\Controllers\LinkController::class . ':GetContent');
+    //通用訂閲
+    $app->group('/sub', function () {
+        $this->get('/{token}/{subtype}',    App\Controllers\SubController::class . ':getContent');
     });
 
     $app->group('/getClient', function () {
-        $this->get('/{token}', App\Controllers\UserController::class . ':getClientfromToken');
+        $this->get('/{token}',              App\Controllers\UserController::class . ':getClientfromToken');
     });
 };

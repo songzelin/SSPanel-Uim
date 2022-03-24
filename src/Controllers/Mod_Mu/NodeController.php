@@ -1,23 +1,52 @@
 <?php
-
-
 namespace App\Controllers\Mod_Mu;
 
-use App\Controllers\BaseController;
-use App\Models\{
-    Node,
-    NodeInfoLog
-};
-use App\Services\Config;
 use Slim\Http\{
     Request,
     Response
 };
+use App\Models\{
+    Node,
+    StreamMedia,
+    NodeInfoLog
+};
 use App\Utils\Tools;
+use App\Services\Config;
+use App\Controllers\BaseController;
 use Psr\Http\Message\ResponseInterface;
 
 class NodeController extends BaseController
 {
+    /**
+     * @param Request   $request
+     * @param Response  $response
+     * @param array     $args
+     */
+    public function saveReport($request, $response, $args)
+    {
+        // $request_ip = $_SERVER["REMOTE_ADDR"];
+        $node_id = $request->getParam('node_id');
+        $content = $request->getParam('content');
+        $result = json_decode(base64_decode($content), true);
+
+        /* $node = Node::where('node_ip', $request_ip)->first();
+        if ($node != null) {
+            $report = new StreamMedia;
+            $report->node_id = $node->id;
+            $report->result = json_encode($result);
+            $report->created_at = time();
+            $report->save();
+            die('ok');
+        } */
+        
+        $report = new StreamMedia;
+        $report->node_id = $node_id;
+        $report->result = json_encode($result);
+        $report->created_at = time();
+        $report->save();
+        die('ok');
+    }
+    
     /**
      * @param Request   $request
      * @param Response  $response
@@ -70,7 +99,7 @@ class NodeController extends BaseController
             ];
             return $response->withJson($res);
         }
-        if (in_array($node->sort, [0, 10])) {
+        if (in_array($node->sort, [0])) {
             $node_explode = explode(';', $node->server);
             $node_server = $node_explode[0];
         } else {
@@ -84,9 +113,12 @@ class NodeController extends BaseController
             'mu_only' => $node->mu_only,
             'sort' => $node->sort,
             'server' => $node_server,
+            'custom_config' => json_decode($node->custom_config, true, JSON_UNESCAPED_SLASHES),
             'disconnect_time' => $_ENV['disconnect_time'],
-            'type' => 'SSPanel-UIM'
+            'type' => 'SSPanel-UIM',
+            'version' => '2021.11'
         ];
+
         $res = [
             'ret' => 1,
             'data' => $data

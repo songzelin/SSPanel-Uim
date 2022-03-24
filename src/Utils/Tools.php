@@ -2,12 +2,24 @@
 
 namespace App\Utils;
 
-use App\Models\{Model, User, Node};
+use App\Models\{Link, Model, User, Node};
 use App\Services\Config;
+use App\Utils\QQWry;
 use DateTime;
 
 class Tools
 {
+    /**
+     * 查询IP归属
+     */
+    public static function getIpInfo($ip)
+    {
+        $iplocation = new QQWry();
+        $location   = $iplocation->getlocation($ip);
+        $ipInfo     = iconv('gbk', 'utf-8//IGNORE', $location['country'] . $location['area']);
+        return $ipInfo;
+    }
+
     /**
      * 根据流量值自动转换单位输出
      */
@@ -188,8 +200,7 @@ class Tools
     {
         if ($_ENV['min_port'] > 65535 || $_ENV['min_port'] <= 0 || $_ENV['max_port'] > 65535 || $_ENV['max_port'] <= 0) {
             return 0;
-        }
-        else {
+        } else {
             $det = User::pluck('port')->toArray();
             $port = array_diff(range($_ENV['min_port'], $_ENV['max_port']), $det);
             shuffle($port);
@@ -312,8 +323,7 @@ class Tools
                 if ($single_rule->dist_node_id == $path->begin_node->id) {
                     $path->begin_node = $single_rule->Source_Node();
                     if ($path->begin_node->isNodeAccessable() == false) {
-                        $path->path = '<span style="color: #FF0000; ">' . $single_rule->Source_Node(
-                            )->name . '</span>' . ' → ' . $path->path;
+                        $path->path = '<span style="color: #FF0000; ">' . $single_rule->Source_Node()->name . '</span>' . ' → ' . $path->path;
                         $path->status = '阻断';
                     } else {
                         $path->path = $single_rule->Source_Node()->name . ' → ' . $path->path;
@@ -325,8 +335,7 @@ class Tools
                 if ($path->end_node->id == $single_rule->source_node_id) {
                     $path->end_node = $single_rule->Dist_Node();
                     if ($path->end_node->isNodeAccessable() == false) {
-                        $path->path .= ' → ' . '<span style="color: #FF0000; ">' . $single_rule->Dist_Node(
-                            )->name . '</span>';
+                        $path->path .= ' → ' . '<span style="color: #FF0000; ">' . $single_rule->Dist_Node()->name . '</span>';
                         $path->status = '阻断';
                     } else {
                         $path->path .= ' → ' . $single_rule->Dist_Node()->name;
@@ -421,21 +430,24 @@ class Tools
                 $item['path'] = '/';
             } elseif ($item['net'] == 'tls') {
                 $item['tls'] = 'tls';
-            }elseif ($server[3] == 'grpc') {
-                $item['net'] = 'grpc';
-            }elseif ($server[4] == 'grpc') {
+            }
+            if ($server[4] == 'grpc') {
                 $item['net'] = 'grpc';
             }
         }
         if (count($server) >= 5) {
             if (in_array($item['net'], array('kcp', 'http', 'mkcp'))) {
                 $item['headerType'] = $server[4];
-            } elseif ($server[4] == 'ws') {
-                $item['net'] = 'ws';
-            } elseif ($server[4] == 'tls') {
-                $item['tls'] = 'tls';
-            } elseif ($server[4] == 'xtls') {
-                $item['tls'] = 'xtls';
+            } else {
+                switch ($server[4]) {
+                    case 'ws':
+                        $item['net'] = $server[4];
+                        break;
+                    case 'tls':
+                    case 'xtls':
+                        $item['tls'] = $server[4];
+                        break;
+                }
             }
         }
         if (count($server) >= 6 && $server[5] != '') {
@@ -462,25 +474,25 @@ class Tools
 
             if (array_key_exists('servicename', $item)) {
                 $item['servicename'] = $item['servicename'];
-            }else{
+            } else {
                 $item['servicename'] = "";
             }
 
             if (array_key_exists('enable_xtls', $item)) {
                 $item['enable_xtls'] = $item['enable_xtls'];
-            }else{
+            } else {
                 $item['enable_xtls'] = "";
             }
 
             if (array_key_exists('flow', $item)) {
                 $item['flow'] = $item['flow'];
-            }else{
+            } else {
                 $item['flow'] = "xtls-rprx-direct";
             }
 
             if (array_key_exists('enable_vless', $item)) {
                 $item['vtype'] = 'vless://';
-            }else{
+            } else {
                 $item['vtype'] = 'vmess://';
             }
 
@@ -520,10 +532,12 @@ class Tools
                 $item['tls'] = 'tls';
             }
         }
-        if (count($server) >= 5 && $server[4] == 'ws') {
-            $item['net'] = 'ws';
-        } elseif (count($server) >= 5 && $server[4] == 'tls') {
-            $item['tls'] = 'tls';
+        if (count($server) >= 5) {
+            if ($server[4] == 'ws') {
+                $item['net'] = 'ws';
+            } elseif ($server[4] == 'tls') {
+                $item['tls'] = 'tls';
+            }
         }
         if (count($server) >= 6) {
             $item = array_merge($item, URL::parse_args($server[5]));
@@ -627,7 +641,6 @@ class Tools
                                 "backend" => (int) $backend_port,
                                 "display" => (int) $display_port
                             ];
-
                         } else {
                             $user_port = substr($item['port'], 0, strpos($item['port'], '#'));
 
@@ -894,23 +907,23 @@ class Tools
     {
         $totalPage   = $data->lastPage();
         $currentPage = $data->currentPage();
-        $html = '<ul class="pagination">';
+        $html = '<ul class="pagination pagination-primary justify-content-end">';
         for ($i = 1; $i <= $totalPage; $i++) {
-            $active = '<li class="active"><span>' . $i . '</span></li>';
-            $page   = '<li><a href="' . $data->url($i) . '">' . $i . '</a></li>';
+            $active = '<li class="page-item active"><span class="page-link">' . $i . '</span></li>';
+            $page   = '<li class="page-item"><a class="page-link" href="' . $data->url($i) . '">' . $i . '</a></li>';
             if ($i == 1) {
                 // 当前为第一页
                 if ($currentPage == $i) {
-                    $html .= '<li class="disabled"><span>«</span></li>';
+                    $html .= '<li class="page-item disabled"><a class="page-link">上一页</a></li>';
                     $html .= $active;
                     if ($i == $totalPage) {
-                        $html .= '<li class="disabled"><span>»</span></li>';
+                        $html .= '<li class="page-item disabled"><a class="page-link">下一页</a></li>';
                         continue;
                     }
                 } else {
-                    $html .= '<li><a href="' . $data->url($currentPage - 1) . '" rel="prev">«</a></li>';
+                    $html .= '<li class="page-item"><a class="page-link" href="' . $data->url($currentPage - 1) . '">上一页</a></li>';
                     if ($currentPage > 4) {
-                        $html .= '<li><a href="javascript:void(0)">...</a></li>';
+                        $html .= '<li class="page-item disabled"><a class="page-link">...</a></li>';
                     } else {
                         $html .= $page;
                     }
@@ -920,14 +933,14 @@ class Tools
                 // 当前为最后一页
                 if ($currentPage == $i) {
                     $html .= $active;
-                    $html .= '<li class="disabled"><span>»</span></li>';
+                    $html .= '<li class="page-item disabled"><a class="page-link">下一页</a></li>';
                 } else {
                     if ($totalPage - $currentPage > 3) {
-                        $html .= '<li><a href="javascript:void(0)">...</a></li>';
+                        $html .= '<li class="page-item disabled"><a class="page-link">...</a></li>';
                     } else {
                         $html .= $page;
                     }
-                    $html .= '<li><a href="' . $data->url($currentPage + 1) . '" rel="next">»</a></li>';
+                    $html .= '<li class="page-item"><a class="page-link" href="' . $data->url($currentPage + 1) . '">下一页</a></li>';
                 }
             }
             if ($i > 1 && $i < $totalPage) {
@@ -957,8 +970,22 @@ class Tools
         return $html;
     }
 
-    public static function etag($data) {
+    public static function etag($data)
+    {
         $etag = sha1(json_encode($data));
         return $etag;
+    }
+
+    public static function genSubToken()
+    {
+        for ($i = 0; $i < 10; $i++) {
+            $token = self::genRandomChar(16);
+            $is_token_used = Link::where('token', $token)->first();
+            if ($is_token_used == null) {
+                return $token;
+            }
+        }
+
+        return "couldn't alloc token";
     }
 }
